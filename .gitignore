@@ -1,0 +1,16 @@
+# FFmpeg 开发包（BtbN shared build，本地手动解压，不入库）
+/ffmpeg-dev/
+
+# 构建发布包（由 build.ps1 / CI 生成，exe + FFmpeg 运行时 DLL 自包含）
+/dist/
+
+# 散落的编译产物（防止在根目录直接 go build / 旧脚本残留）
+*.exe
+*.dll
+
+# Go 测试 / 调试产物
+*.test
+*.out
+
+# 临时调试目录
+/_smoketest/

@@ -1,0 +1,25 @@
+[ramdisk]
+  size_mb = 2048
+  mount_point = "R:"
+  label = "FrameDisk"
+
+[encoder]
+  codec = ""
+  fps = 60
+  crf = 18
+  maxrate = ""
+  bufsize = ""
+  skip_frames = 0
+  [encoder.extra_opts]
+
+[output]
+  dir = "D:\\Videos"
+  filename_pattern = "{n}.mp4"
+  total_frames = 1000
+  hibernate = false
+
+[monitor]
+  frame_prefix = "mmdrecord_"
+  frame_digits = 4
+  poll_interval_ms = 50
+  no_new_frame_timeout_s = 60
