@@ -20,20 +20,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # MinGW-w64 工具链 + FFmpeg（开发头文件、静态/共享库、运行时 DLL）
+      # CGO 工具链：仅 gcc + pkg-config（FFmpeg 改为直接下载，不再经 pacman 拉整棵依赖树）
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
-          update: true
+          path-type: inherit
           install: >-
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-pkg-config
-            mingw-w64-x86_64-ffmpeg
 
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
+
+      # FFmpeg 8.1 win64-gpl-shared（BtbN 构建：codec 库已静态链入 av*.dll，运行时仅 7 个 DLL）。
+      # go-astiav v0.41.0 对应 FFmpeg 8.x（avcodec-62），固定在 n8.1 分支以保持 ABI。
+      - name: fetch ffmpeg
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $name = gh api repos/BtbN/FFmpeg-Builds/releases/tags/latest --jq '.assets[].name' |
+            Where-Object { $_ -like 'ffmpeg-n8.1-*win64-gpl-shared*.zip' } | Select-Object -First 1
+          if (-not $name) { throw 'BtbN n8.1 gpl-shared asset not found' }
+          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$name"
+          Write-Host "downloading $url"
+          curl.exe -fL $url -o ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-tmp -Force
+          $inner = Get-ChildItem ffmpeg-tmp -Directory | Select-Object -First 1
+          Move-Item $inner.FullName ffmpeg
+
+      # 把 dev 文件并入 /mingw64：headers / 导入库 / 可重定位 .pc，
+      # 现有的 -I/mingw64/include 与 pkg-config 配置因此无需改动。
+      - name: install ffmpeg into mingw64
+        run: |
+          cp -r ffmpeg/include/* /mingw64/include/
+          cp -r ffmpeg/lib/*     /mingw64/lib/
 
       - name: vet
         env:
@@ -61,13 +84,16 @@ jobs:
           mkdir -p dist
           go build -trimpath -ldflags='-s -w' -o dist/framekit.exe .
 
-          # FFmpeg 运行时 DLL（msys2/mingw64 命名为 av*.dll / sw*.dll，无 lib 前缀）
-          cp /mingw64/bin/av*.dll /mingw64/bin/sw*.dll dist/
+          # FFmpeg 运行时 DLL：BtbN 构建自包含，仅 7 个 av*/sw*
+          cp ffmpeg/bin/*.dll dist/
 
-          # MinGW 运行时（msys2 shared FFmpeg 会依赖这些）
-          cp /mingw64/bin/libgcc_s_seh-1.dll dist/
-          cp /mingw64/bin/libwinpthread-1.dll dist/
-          cp /mingw64/bin/libstdc++-6.dll     dist/ || true
+          # 再补 framekit.exe 自身链接的 mingw 运行时（若有）。
+          # grep 无匹配时退出码为 1，pipefail 下会误判整步失败，故 || true 兜底。
+          ldd dist/framekit.exe \
+            | { grep -i '/mingw64/bin/' || true; } \
+            | awk '{print $3}' \
+            | sort -u \
+            | while read -r dll; do cp -v "$dll" dist/; done
 
       # 打包成 zip，版本号取自 tag（非 tag 推送用 dev）
       - name: package
