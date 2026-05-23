@@ -94,7 +94,7 @@ func cmdRun(args []string) {
 	case pipeline.MountDriveInUse:
 		log.Fatalf("盘符 %s 已被占用，请改用其他挂载点", cfg.Ramdisk.MountPoint)
 	case pipeline.MountDirNonEmpty:
-		prompt := fmt.Sprintf("目录 %s 非空，挂载 RAM 盘会暂时遮蔽其中内容。继续？", cfg.Ramdisk.MountPoint)
+		prompt := fmt.Sprintf("警告：目录 %s 中已有文件！\n流水线运行时会删除 RAM 盘上的帧文件，原始文件被永久删除。\n请确认该目录是专用空挂载点，而非含有重要文件的文件夹。继续？", cfg.Ramdisk.MountPoint)
 		if !*yes && !confirm(prompt) {
 			log.Println("已取消")
 			return

@@ -109,6 +109,18 @@ func Run(ctx context.Context, cfg Config, onProgress func(done, total int)) erro
 	if len(mount) == 2 && mount[1] == ':' {
 		watchDir = mount + "\\"
 	}
+
+	// Safety check: a freshly formatted RAM disk must be empty. If files are
+	// visible immediately after mounting, the original folder contents leaked
+	// through — abort immediately before any os.Remove is called.
+	if entries, err := os.ReadDir(watchDir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				removeRamdisk()
+				return fmt.Errorf("安全检查失败：挂载后目录 %s 内仍可见已有文件，操作已中止以防数据丢失。\n请确保挂载点是空目录，切勿使用含有重要文件的文件夹。", mount)
+			}
+		}
+	}
 	monitor := NewMonitor(watchDir, cfg.Monitor)
 
 	log.Printf("waiting for frames in %s ...", watchDir)

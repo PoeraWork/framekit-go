@@ -337,8 +337,12 @@ func (u *ui) onStart() {
 		dialog.ShowError(fmt.Errorf("盘符 %s 已被占用，请改用其他挂载点", cfg.Ramdisk.MountPoint), u.win)
 		return
 	case pipeline.MountDirNonEmpty:
-		dialog.ShowConfirm("挂载点非空",
-			fmt.Sprintf("目录 %s 中已有文件。\n挂载 RAM 盘会暂时遮蔽其中的内容（卸载后恢复）。\n\n确定继续吗？", cfg.Ramdisk.MountPoint),
+		dialog.ShowConfirm("挂载点非空 — 数据丢失风险",
+			fmt.Sprintf("目录 %s 中已有文件！\n\n"+
+				"⚠️  警告：流水线运行时会删除 RAM 盘上的帧文件。\n"+
+				"如果挂载后原始文件仍可见，它们将被永久删除，无法恢复。\n\n"+
+				"请确认该目录是专用的空挂载点，而非相册或其他重要文件夹。\n\n"+
+				"继续？", cfg.Ramdisk.MountPoint),
 			func(ok bool) {
 				if ok {
 					u.proceed(cfg)
