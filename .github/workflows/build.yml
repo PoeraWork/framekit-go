@@ -57,6 +57,7 @@ jobs:
         run: |
           cp -r ffmpeg/include/* /mingw64/include/
           cp -r ffmpeg/lib/*     /mingw64/lib/
+          cp -r ffmpeg/bin/*.dll /mingw64/bin/
 
       - name: vet
         env:
