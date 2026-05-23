@@ -10,9 +10,14 @@ import (
 	"github.com/asticode/go-astiav"
 )
 
-// hevcCandidates is probed in order when no codec is forced in the config:
-// software first (best quality), then hardware encoders.
-var hevcCandidates = []string{"libx265", "hevc_amf", "hevc_nvenc", "hevc_qsv"}
+// hevcCandidates is probed in order when no codec is forced in the config.
+// Hardware encoders come first because libx265 almost never keeps up with
+// real-time frame production; it stays in the list as a software fallback.
+var hevcCandidates = []string{"hevc_nvenc", "hevc_amf", "hevc_qsv", "libx265"}
+
+// probeCRF is an arbitrary mid-range quality used only during availability
+// probing; the actual run uses EncoderConfig.CRF.
+const probeCRF = 23
 
 var encoderLabels = map[string]string{
 	"libx265":    "软件 (libx265)",
@@ -50,7 +55,9 @@ func AvailableEncoders() []EncoderInfo {
 }
 
 // probeEncoder reports whether an encoder can be opened on a small dummy
-// context. For hardware encoders this means the device and driver are usable.
+// context with the same rate-control options the real run uses. Passing the
+// real options here keeps the GUI list honest — if a knob is invalid for an
+// encoder, that encoder is hidden instead of failing later at frame 0.
 func probeEncoder(name string) bool {
 	codec := astiav.FindEncoderByName(name)
 	if codec == nil {
@@ -66,7 +73,36 @@ func probeEncoder(name string) bool {
 	codecContext.SetPixelFormat(pickPixelFormat(codec))
 	codecContext.SetTimeBase(astiav.NewRational(1, 30))
 	codecContext.SetFramerate(astiav.NewRational(30, 1))
-	return codecContext.Open(codec, nil) == nil
+	options := rateControlOptions(name, probeCRF)
+	defer options.Free()
+	return codecContext.Open(codec, options) == nil
+}
+
+// rateControlOptions returns the per-encoder quality options. Each hardware
+// HEVC encoder uses a different rc enum and qp field name, so we can't share
+// one set:
+//   - libx265: software CRF
+//   - hevc_amf: rc=cqp + qp_i / qp_p (no flat qp option)
+//   - hevc_nvenc: rc=constqp (NOT cqp) + flat qp
+//   - hevc_qsv: no rc option; ICQ mode driven by global_quality
+func rateControlOptions(codecName string, crf int) *astiav.Dictionary {
+	d := astiav.NewDictionary()
+	noFlags := astiav.NewDictionaryFlags()
+	qp := strconv.Itoa(crf)
+	switch codecName {
+	case "libx265":
+		_ = d.Set("crf", qp, noFlags)
+	case "hevc_amf":
+		_ = d.Set("rc", "cqp", noFlags)
+		_ = d.Set("qp_i", qp, noFlags)
+		_ = d.Set("qp_p", qp, noFlags)
+	case "hevc_nvenc":
+		_ = d.Set("rc", "constqp", noFlags)
+		_ = d.Set("qp", qp, noFlags)
+	case "hevc_qsv":
+		_ = d.Set("global_quality", qp, noFlags)
+	}
+	return d
 }
 
 // Encoder turns decoded image frames into an HEVC MP4 file via libav*.
@@ -274,19 +310,11 @@ func (e *Encoder) openCodec(globalHeader bool) error {
 	return fmt.Errorf("no usable HEVC encoder found: %w", lastErr)
 }
 
-// buildOptions maps config quality settings to libav encoder options.
+// buildOptions maps config quality settings to libav encoder options. Extra
+// opts from the config are layered on top so users can override defaults.
 func (e *Encoder) buildOptions(codecName string) *astiav.Dictionary {
-	d := astiav.NewDictionary()
+	d := rateControlOptions(codecName, e.cfg.CRF)
 	noFlags := astiav.NewDictionaryFlags()
-	crf := strconv.Itoa(e.cfg.CRF)
-
-	if codecName == "libx265" {
-		_ = d.Set("crf", crf, noFlags)
-	} else {
-		// Hardware HEVC encoders: constant-QP rate control.
-		_ = d.Set("rc", "cqp", noFlags)
-		_ = d.Set("qp", crf, noFlags)
-	}
 	for k, v := range e.cfg.ExtraOpts {
 		_ = d.Set(k, v, noFlags)
 	}
