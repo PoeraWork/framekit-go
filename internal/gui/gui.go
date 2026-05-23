@@ -7,6 +7,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -40,9 +41,10 @@ type ui struct {
 	totalFrames     *widget.Entry
 	hibernate       *widget.Check
 
-	pattern        *widget.Entry
-	pollInterval   *widget.Entry
-	noFrameTimeout *widget.Entry
+	pattern          *widget.Entry
+	pollInterval     *widget.Entry
+	noFrameTimeout   *widget.Entry
+	minimizeOnStart  *widget.Check
 
 	startBtn *widget.Button
 	stopBtn  *widget.Button
@@ -133,6 +135,8 @@ func (u *ui) build() {
 	u.pattern.SetPlaceHolder(`留空自动识别；如 ^(\d+)_9\.bmp$`)
 	u.pollInterval = widget.NewEntry()
 	u.noFrameTimeout = widget.NewEntry()
+	u.minimizeOnStart = widget.NewCheck("", nil)
+	u.minimizeOnStart.SetChecked(true)
 
 	u.startBtn = widget.NewButton("开始", u.onStart)
 	u.startBtn.Importance = widget.HighImportance
@@ -186,6 +190,7 @@ func (u *ui) content() fyne.CanvasObject {
 		widget.NewFormItem("轮询间隔 (ms)", u.pollInterval),
 		widget.NewFormItem("无新帧超时 (s)", u.noFrameTimeout),
 		widget.NewFormItem("文件名正则 (高级)", u.pattern),
+		widget.NewFormItem("启动后自动最小化", u.minimizeOnStart),
 	)
 
 	tabs := container.NewAppTabs(
@@ -394,6 +399,15 @@ func (u *ui) startRun(cfg pipeline.Config) {
 	u.progress.SetValue(0)
 	log.Println("====== 开始 ======")
 
+	var hwnd uintptr
+	if u.minimizeOnStart.Checked {
+		hwnd = findHwnd(u.win.Title())
+		go func() {
+			time.Sleep(300 * time.Millisecond)
+			minimizeHwnd(hwnd)
+		}()
+	}
+
 	go func() {
 		defer close(u.done)
 		lastPermille := -1
@@ -414,6 +428,9 @@ func (u *ui) startRun(cfg pipeline.Config) {
 			u.startBtn.Enable()
 			u.saveBtn.Enable()
 			u.stopBtn.Disable()
+			if hwnd != 0 {
+				restoreHwnd(hwnd)
+			}
 			switch {
 			case err == nil:
 				u.progress.SetValue(1)
