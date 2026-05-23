@@ -85,6 +85,11 @@ func probeEncoder(name string) bool {
 //   - hevc_amf: rc=cqp + qp_i / qp_p (no flat qp option)
 //   - hevc_nvenc: rc=constqp (NOT cqp) + flat qp
 //   - hevc_qsv: no rc option; ICQ mode driven by global_quality
+//
+// Hardware encoders also get bf=0 to disable B-frames. GPU reference-frame
+// corruption (a known issue in AMF and NVENC with certain driver versions)
+// causes green screens on all B-frame-dependent frames; P-frame-only encoding
+// eliminates that failure mode at the cost of ~5% larger files.
 func rateControlOptions(codecName string, crf int) *astiav.Dictionary {
 	d := astiav.NewDictionary()
 	noFlags := astiav.NewDictionaryFlags()

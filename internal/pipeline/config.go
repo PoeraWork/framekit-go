@@ -130,6 +130,7 @@ crf = 18
 skip_frames = 0            # 跳过前 N 帧不编码
 
 [encoder.extra_opts]       # 额外编码器选项（键值对，值为字符串），如 preset = "medium"
+                           # 硬件编码器默认关闭 B 帧（bf=0）以防绿屏，如需开启：bf = "2"
 
 [output]
 dir = "D:/Videos"
