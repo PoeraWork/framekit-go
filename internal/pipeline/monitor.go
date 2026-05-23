@@ -16,7 +16,7 @@ import (
 // autoDetectRe matches "<prefix><digits>.<ext>" with the digit run being the
 // longest trailing one. It is the default template detector when no user
 // pattern is configured.
-var autoDetectRe = regexp.MustCompile(`^(.+?)(\d+)\.(\w+)$`)
+var autoDetectRe = regexp.MustCompile(`^(.*?)(\d+)\.(\w+)$`)
 
 // Monitor watches a directory for frame files produced by the recording tool.
 // Call AwaitTemplate once to lock in the naming template (auto-detected from

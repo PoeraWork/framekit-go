@@ -36,6 +36,8 @@ func TestAwaitTemplateAutoDetect(t *testing.T) {
 		{"no padding", "frame_1.png", "frame_", 1, "png", 1},
 		{"embedded digits caught at trailing", "image_v2_007.jpg", "image_v2_", 3, "jpg", 7},
 		{"constant prefix digits", "9_42.bmp", "9_", 2, "bmp", 42},
+		{"no prefix bare number", "0.bmp", "", 1, "bmp", 0},
+		{"no prefix padded", "0001.bmp", "", 4, "bmp", 1},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
