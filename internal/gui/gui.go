@@ -7,6 +7,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -404,11 +405,18 @@ func (u *ui) startRun(cfg pipeline.Config) {
 	log.Println("====== 开始 ======")
 
 	var hwnd uintptr
+	cancelCh := make(chan struct{})
+	var cancelOnce sync.Once
+	cancelMinimize := func() { cancelOnce.Do(func() { close(cancelCh) }) }
+
 	if u.minimizeOnStart.Checked {
 		hwnd = findHwnd(u.win.Title())
 		go func() {
-			time.Sleep(300 * time.Millisecond)
-			minimizeHwnd(hwnd)
+			select {
+			case <-time.After(300 * time.Millisecond):
+				minimizeHwnd(hwnd)
+			case <-cancelCh:
+			}
 		}()
 	}
 
@@ -428,6 +436,7 @@ func (u *ui) startRun(cfg pipeline.Config) {
 			fyne.Do(func() { u.progress.SetValue(v) })
 		})
 		fyne.Do(func() {
+			cancelMinimize() // abort pending minimize if pipeline failed quickly
 			u.cancel = nil
 			u.startBtn.Enable()
 			u.saveBtn.Enable()

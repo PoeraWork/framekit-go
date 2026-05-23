@@ -92,8 +92,14 @@ func (r *Ramdisk) Create() (string, error) {
 // Remove unmounts the RAM disk.
 func (r *Ramdisk) Remove() error {
 	cmd := exec.Command(r.imdisk, "-D", "-m", r.cfg.MountPoint)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("imdisk remove failed: %w: %s", err, strings.TrimSpace(string(out)))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		// "Not a mount point" means the path was never mounted or already removed — safe to ignore.
+		if strings.Contains(strings.ToLower(msg), "not a mount point") {
+			return nil
+		}
+		return fmt.Errorf("imdisk remove failed: %w: %s", err, msg)
 	}
 	return nil
 }
