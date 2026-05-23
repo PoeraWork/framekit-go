@@ -96,11 +96,14 @@ func rateControlOptions(codecName string, crf int) *astiav.Dictionary {
 		_ = d.Set("rc", "cqp", noFlags)
 		_ = d.Set("qp_i", qp, noFlags)
 		_ = d.Set("qp_p", qp, noFlags)
+		_ = d.Set("bf", "0", noFlags) // disable B-frames — AMF reference-frame corruption causes green screens
 	case "hevc_nvenc":
 		_ = d.Set("rc", "constqp", noFlags)
 		_ = d.Set("qp", qp, noFlags)
+		_ = d.Set("bf", "0", noFlags) // disable B-frames
 	case "hevc_qsv":
 		_ = d.Set("global_quality", qp, noFlags)
+		_ = d.Set("bf", "0", noFlags) // disable B-frames
 	}
 	return d
 }
