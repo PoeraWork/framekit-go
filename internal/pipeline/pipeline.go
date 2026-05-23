@@ -112,12 +112,8 @@ func Run(ctx context.Context, cfg Config, onProgress func(done, total int)) erro
 	monitor := NewMonitor(watchDir, cfg.Monitor)
 
 	log.Printf("waiting for frames in %s ...", watchDir)
-	for !monitor.HasAnyFile() {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(20 * time.Millisecond):
-		}
+	if err := monitor.AwaitTemplate(ctx); err != nil {
+		return err
 	}
 	log.Println("first frame detected, starting pipeline")
 

@@ -40,8 +40,7 @@ type ui struct {
 	totalFrames     *widget.Entry
 	hibernate       *widget.Check
 
-	framePrefix    *widget.Entry
-	frameDigits    *widget.Entry
+	pattern        *widget.Entry
 	pollInterval   *widget.Entry
 	noFrameTimeout *widget.Entry
 
@@ -130,8 +129,8 @@ func (u *ui) build() {
 	u.totalFrames = widget.NewEntry()
 	u.hibernate = widget.NewCheck("", nil)
 
-	u.framePrefix = widget.NewEntry()
-	u.frameDigits = widget.NewEntry()
+	u.pattern = widget.NewEntry()
+	u.pattern.SetPlaceHolder(`留空自动识别；如 ^(\d+)_9\.bmp$`)
 	u.pollInterval = widget.NewEntry()
 	u.noFrameTimeout = widget.NewEntry()
 
@@ -184,10 +183,9 @@ func (u *ui) content() fyne.CanvasObject {
 		widget.NewFormItem("完成后休眠", u.hibernate),
 	)
 	monTab := widget.NewForm(
-		widget.NewFormItem("帧文件前缀", u.framePrefix),
-		widget.NewFormItem("帧序号位数", u.frameDigits),
 		widget.NewFormItem("轮询间隔 (ms)", u.pollInterval),
 		widget.NewFormItem("无新帧超时 (s)", u.noFrameTimeout),
+		widget.NewFormItem("文件名正则 (高级)", u.pattern),
 	)
 
 	tabs := container.NewAppTabs(
@@ -236,8 +234,7 @@ func (u *ui) loadInto(cfg pipeline.Config) {
 	u.totalFrames.SetText(strconv.Itoa(cfg.Output.TotalFrames))
 	u.hibernate.SetChecked(cfg.Output.Hibernate)
 
-	u.framePrefix.SetText(cfg.Monitor.FramePrefix)
-	u.frameDigits.SetText(strconv.Itoa(cfg.Monitor.FrameDigits))
+	u.pattern.SetText(cfg.Monitor.Pattern)
 	u.pollInterval.SetText(strconv.Itoa(cfg.Monitor.PollIntervalMS))
 	u.noFrameTimeout.SetText(strconv.Itoa(cfg.Monitor.NoNewFrameTimeoutS))
 }
@@ -281,8 +278,7 @@ func (u *ui) collect() (pipeline.Config, error) {
 	cfg.Output.TotalFrames = atoi(u.totalFrames.Text, "总帧数")
 	cfg.Output.Hibernate = u.hibernate.Checked
 
-	cfg.Monitor.FramePrefix = u.framePrefix.Text
-	cfg.Monitor.FrameDigits = atoi(u.frameDigits.Text, "帧序号位数")
+	cfg.Monitor.Pattern = strings.TrimSpace(u.pattern.Text)
 	cfg.Monitor.PollIntervalMS = atoi(u.pollInterval.Text, "轮询间隔")
 	cfg.Monitor.NoNewFrameTimeoutS = atoi(u.noFrameTimeout.Text, "无新帧超时")
 

@@ -92,10 +92,10 @@ total_frames = 18000            # 预期总帧数（用于进度条和超时判�
 hibernate = false               # 完成后是否休眠
 
 [monitor]
-frame_prefix = "mmdrecord_"    # MMD 输出的帧文件名前缀
-frame_digits = 4               # 序号位数，如 4 → mmdrecord_0001.png
-poll_interval_ms = 50          # 轮询间隔
-no_new_frame_timeout_s = 60    # 超过此时间没有新帧则视为结束
+# pattern = ""                  # 高级：留空时从首帧文件名自动识别（前缀/位数/扩展名/起始序号）
+                                # 仅当递增数字不在文件名末尾时才需要设置，如：^(\d+)_9\.bmp$
+poll_interval_ms = 50           # 轮询间隔
+no_new_frame_timeout_s = 60     # 超过此时间没有新帧则视为结束
 ```
 
 ## 构建

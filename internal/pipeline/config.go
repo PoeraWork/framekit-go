@@ -33,8 +33,10 @@ type OutputConfig struct {
 }
 
 type MonitorConfig struct {
-	FramePrefix        string `toml:"frame_prefix"`
-	FrameDigits        int    `toml:"frame_digits"`
+	// Pattern is an optional regex applied to file names; the first capture
+	// group must yield the frame index. When empty, the prefix / digit width /
+	// extension are auto-detected from the trailing digits of the first frame.
+	Pattern            string `toml:"pattern"`
 	PollIntervalMS     int    `toml:"poll_interval_ms"`
 	NoNewFrameTimeoutS int    `toml:"no_new_frame_timeout_s"`
 }
@@ -51,7 +53,7 @@ func DefaultConfig() Config {
 		Ramdisk: RamdiskConfig{SizeMB: 2048, MountPoint: "R", Label: "FrameDisk"},
 		Encoder: EncoderConfig{FPS: 60, CRF: 18},
 		Output:  OutputConfig{Dir: "D:\\Videos", FilenamePattern: "{n}.mp4"},
-		Monitor: MonitorConfig{FramePrefix: "mmdrecord_", FrameDigits: 4, PollIntervalMS: 50, NoNewFrameTimeoutS: 60},
+		Monitor: MonitorConfig{PollIntervalMS: 50, NoNewFrameTimeoutS: 60},
 	}
 }
 
@@ -136,8 +138,7 @@ total_frames = 18000       # 总帧数（300秒 * 60fps）
 hibernate = false          # 完成后是否休眠
 
 [monitor]
-frame_prefix = "mmdrecord_"
-frame_digits = 4
+# pattern = ""             # 高级：自定义文件名正则，第一个捕获组为帧号；留空即自动检测末尾数字
 poll_interval_ms = 50
 no_new_frame_timeout_s = 60
 `
