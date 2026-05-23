@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -42,6 +43,12 @@ type template struct {
 }
 
 func NewMonitor(dir string, cfg MonitorConfig) *Monitor {
+	// Resolve symlinks/junctions so file operations use the real path.
+	// On Windows, folder mount points are reparse points; os.Stat through
+	// them can miss newly created files whereas the resolved path works reliably.
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	return &Monitor{dir: dir, cfg: cfg}
 }
 
@@ -81,6 +88,7 @@ func (m *Monitor) AwaitTemplate(ctx context.Context) error {
 func (m *Monitor) detectOnce(userRe *regexp.Regexp) (template, bool) {
 	entries, err := os.ReadDir(m.dir)
 	if err != nil {
+		log.Printf("monitor: ReadDir %s: %v", m.dir, err)
 		return template{}, false
 	}
 	var (
