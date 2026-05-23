@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -85,10 +86,55 @@ func (m *Monitor) AwaitTemplate(ctx context.Context) error {
 // detectOnce scans the watch directory once and derives a template from the
 // smallest-numbered matching file (so a race that surfaces frames out of order
 // still locks onto the true starting index).
+//
+// If no matching files exist directly in m.dir, subdirectories are tried in
+// newest-first order (by modification time). This handles recording tools like
+// MMD that create a timestamped subfolder at startup. When a match is found in
+// a subdirectory, m.dir is updated so subsequent WaitFrame calls use that path.
 func (m *Monitor) detectOnce(userRe *regexp.Regexp) (template, bool) {
+	if tpl, ok := m.scanDir(m.dir, userRe); ok {
+		return tpl, true
+	}
+
+	// No files in root — try subdirectories newest first.
 	entries, err := os.ReadDir(m.dir)
 	if err != nil {
 		log.Printf("monitor: ReadDir %s: %v", m.dir, err)
+		return template{}, false
+	}
+	type subdir struct {
+		path    string
+		modTime time.Time
+	}
+	var subdirs []subdir
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		subdirs = append(subdirs, subdir{filepath.Join(m.dir, e.Name()), info.ModTime()})
+	}
+	sort.Slice(subdirs, func(i, j int) bool {
+		return subdirs[i].modTime.After(subdirs[j].modTime)
+	})
+	for _, d := range subdirs {
+		if tpl, ok := m.scanDir(d.path, userRe); ok {
+			log.Printf("monitor: descending into %s", d.path)
+			m.dir = d.path
+			return tpl, true
+		}
+	}
+	return template{}, false
+}
+
+// scanDir scans a single directory for the lowest-indexed matching frame and
+// returns the derived template. It does not recurse.
+func (m *Monitor) scanDir(dir string, userRe *regexp.Regexp) (template, bool) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
 		return template{}, false
 	}
 	var (

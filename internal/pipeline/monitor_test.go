@@ -57,6 +57,53 @@ func TestAwaitTemplateAutoDetect(t *testing.T) {
 	}
 }
 
+func TestAwaitTemplateSubdirectory(t *testing.T) {
+	root := t.TempDir()
+
+	// Old subfolder with stale frames — should be ignored in favour of newer one.
+	old := filepath.Join(root, "2026-05-23T10-00-00")
+	if err := os.Mkdir(old, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, old, "frame_0001.bmp")
+
+	// Tiny sleep so the newer folder gets a strictly later modtime.
+	time.Sleep(5 * time.Millisecond)
+
+	newer := filepath.Join(root, "2026-05-23T22-18-46")
+	if err := os.Mkdir(newer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, newer, "frame_0001.bmp")
+
+	m := fastMonitor(root)
+	if err := m.AwaitTemplate(context.Background()); err != nil {
+		t.Fatalf("AwaitTemplate: %v", err)
+	}
+	if m.dir != newer {
+		t.Errorf("dir = %s; want newest subdir %s", m.dir, newer)
+	}
+}
+
+func TestAwaitTemplateRootBeforeSubdir(t *testing.T) {
+	root := t.TempDir()
+	// Files directly in root take priority over any subdirectory.
+	writeFile(t, root, "frame_0001.bmp")
+	sub := filepath.Join(root, "2026-05-23T22-18-46")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, sub, "frame_0001.bmp")
+
+	m := fastMonitor(root)
+	if err := m.AwaitTemplate(context.Background()); err != nil {
+		t.Fatalf("AwaitTemplate: %v", err)
+	}
+	if m.dir != root {
+		t.Errorf("dir = %s; want root %s", m.dir, root)
+	}
+}
+
 func TestAwaitTemplatePicksLowestIndex(t *testing.T) {
 	dir := t.TempDir()
 	// File system order isn't guaranteed; both files exist before scan.
