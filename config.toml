@@ -22,3 +22,6 @@
   # pattern = ""                 # 留空自动识别末尾数字；高级用法：^(\d+)_9\.bmp$ 等
   poll_interval_ms = 50
   no_new_frame_timeout_s = 60
+
+[debug]
+  enabled = false

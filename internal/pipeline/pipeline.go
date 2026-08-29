@@ -20,13 +20,33 @@ func init() {
 	astiav.SetLogLevel(astiav.LogLevelError)
 }
 
+func enableFFmpegDebugLogging() {
+	astiav.SetLogLevel(astiav.LogLevelDebug)
+	astiav.SetLogCallback(func(c astiav.Classer, level astiav.LogLevel, _ string, message string) {
+		message = strings.TrimSpace(message)
+		if message == "" {
+			return
+		}
+		className := ""
+		if c != nil && c.Class() != nil {
+			className = c.Class().String()
+		}
+		log.Printf("ffmpeg: level=%d class=%q message=%s", level, className, message)
+	})
+}
+
+func disableFFmpegDebugLogging() {
+	astiav.ResetLogCallback()
+	astiav.SetLogLevel(astiav.LogLevelError)
+}
+
 // MountStatus is the result of inspecting a configured mount point.
 type MountStatus int
 
 const (
-	MountOK         MountStatus = iota // free drive letter, or empty/missing directory
-	MountDriveInUse                    // drive letter already in use
-	MountDirNonEmpty                   // directory exists and is not empty
+	MountOK          MountStatus = iota // free drive letter, or empty/missing directory
+	MountDriveInUse                     // drive letter already in use
+	MountDirNonEmpty                    // directory exists and is not empty
 )
 
 // InspectMountPoint checks a normalized mount point ("X:" or "X:\path") so the
@@ -75,6 +95,13 @@ func Run(ctx context.Context, cfg Config, onProgress func(done, total int)) erro
 	}
 	total := cfg.Output.TotalFrames
 	skip := cfg.Encoder.SkipFrames
+	if cfg.Debug.Enabled {
+		enableFFmpegDebugLogging()
+		defer disableFFmpegDebugLogging()
+		log.Printf("debug: run config mount=%q size_mb=%d output_dir=%q output_pattern=%q total_frames=%d codec=%q fps=%d skip_frames=%d monitor_pattern=%q poll_ms=%d timeout_s=%d",
+			cfg.Ramdisk.MountPoint, cfg.Ramdisk.SizeMB, cfg.Output.Dir, cfg.Output.FilenamePattern, total,
+			cfg.Encoder.Codec, cfg.Encoder.FPS, skip, cfg.Monitor.Pattern, cfg.Monitor.PollIntervalMS, cfg.Monitor.NoNewFrameTimeoutS)
+	}
 
 	log.Println("pre-flight checks...")
 	ramdisk, err := NewRamdisk(cfg.Ramdisk)
@@ -87,6 +114,9 @@ func Run(ctx context.Context, cfg Config, onProgress func(done, total int)) erro
 		return fmt.Errorf("creating output directory: %w", err)
 	}
 	outputPath := nextOutputPath(cfg.Output.Dir, cfg.Output.FilenamePattern)
+	if cfg.Debug.Enabled {
+		log.Printf("debug: selected output path=%q", outputPath)
+	}
 
 	mount, err := ramdisk.Create()
 	if err != nil {
@@ -121,7 +151,7 @@ func Run(ctx context.Context, cfg Config, onProgress func(done, total int)) erro
 			}
 		}
 	}
-	monitor := NewMonitor(watchDir, cfg.Monitor)
+	monitor := NewMonitor(watchDir, cfg.Monitor, cfg.Debug.Enabled)
 
 	log.Printf("waiting for frames in %s ...", watchDir)
 	if err := monitor.AwaitTemplate(ctx); err != nil {
@@ -140,7 +170,7 @@ func Run(ctx context.Context, cfg Config, onProgress func(done, total int)) erro
 				return fmt.Errorf("timeout waiting for frame %d", i)
 			}
 			if err := os.Remove(path); err != nil {
-				log.Printf("warning: could not delete %s", path)
+				log.Printf("warning: could not delete %s: %v", path, err)
 			}
 		}
 		log.Println("skip complete, starting encoding")
@@ -150,6 +180,7 @@ func Run(ctx context.Context, cfg Config, onProgress func(done, total int)) erro
 	if err != nil {
 		return err
 	}
+	defer encoder.Abort()
 
 	produced := 0
 	var runErr error
@@ -163,8 +194,16 @@ func Run(ctx context.Context, cfg Config, onProgress func(done, total int)) erro
 			}
 			break
 		}
-		frame, err := decodeImageWithRetry(path, 10, 100*time.Millisecond)
+		frame, err := decodeImageWithRetry(path, 10, 100*time.Millisecond, cfg.Debug.Enabled)
 		if err != nil {
+			if cfg.Debug.Enabled {
+				copyPath, copyErr := preserveFailedFrame(path, i)
+				if copyErr != nil {
+					log.Printf("warning: failed to preserve frame %d: %v", i, copyErr)
+				} else {
+					log.Printf("debug: failed frame preserved at %s", copyPath)
+				}
+			}
 			return fmt.Errorf("decoding frame %d (%s): %w", i, path, err)
 		}
 		err = encoder.Encode(frame)
@@ -173,7 +212,7 @@ func Run(ctx context.Context, cfg Config, onProgress func(done, total int)) erro
 			return fmt.Errorf("encoding frame %d: %w", i, err)
 		}
 		if err := os.Remove(path); err != nil {
-			log.Printf("warning: could not delete %s", path)
+			log.Printf("warning: could not delete %s: %v", path, err)
 		}
 		produced++
 		if onProgress != nil {
@@ -191,7 +230,7 @@ func Run(ctx context.Context, cfg Config, onProgress func(done, total int)) erro
 		return errors.New("no frames were produced")
 	}
 	if err := encoder.Close(); err != nil {
-		return fmt.Errorf("finalizing video: %w", err)
+		return fmt.Errorf("finalizing video %s (file may be incomplete): %w", outputPath, err)
 	}
 	log.Printf("done — %d frames -> %s", produced, outputPath)
 

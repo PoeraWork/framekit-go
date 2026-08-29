@@ -1,11 +1,18 @@
 package pipeline
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
+	"log"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/asticode/go-astiav"
+
+	"framekit/internal/applog"
 )
 
 // decodeImage decodes a single image file (PNG, BMP, JPEG, ...) into a frame
@@ -101,17 +108,93 @@ func decodeImage(path string) (*astiav.Frame, error) {
 
 // decodeImageWithRetry retries decoding because the recording tool may still
 // hold a lock on a freshly written frame file.
-func decodeImageWithRetry(path string, retries int, delay time.Duration) (*astiav.Frame, error) {
+func decodeImageWithRetry(path string, retries int, delay time.Duration, debug bool) (*astiav.Frame, error) {
 	var lastErr error
+	started := time.Now()
 	for attempt := 0; attempt < retries; attempt++ {
 		frame, err := decodeImage(path)
 		if err == nil {
+			if debug && attempt > 0 {
+				log.Printf("debug: decode succeeded attempt=%d/%d elapsed=%s path=%q", attempt+1, retries, time.Since(started).Round(time.Millisecond), path)
+			}
 			return frame, nil
 		}
 		lastErr = err
+		if debug {
+			log.Printf("debug: decode failed attempt=%d/%d elapsed=%s path=%q %s error=%v", attempt+1, retries, time.Since(started).Round(time.Millisecond), path, describeImageFile(path), err)
+		}
 		if attempt < retries-1 {
 			time.Sleep(delay)
 		}
 	}
 	return nil, fmt.Errorf("after %d attempts: %w", retries, lastErr)
+}
+
+func describeImageFile(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Sprintf("stat_error=%q", err)
+	}
+	result := fmt.Sprintf("size=%d modtime=%s", info.Size(), info.ModTime().Format(time.RFC3339Nano))
+	f, err := os.Open(path)
+	if err != nil {
+		return result + fmt.Sprintf(" open_error=%q", err)
+	}
+	defer f.Close()
+
+	header := make([]byte, 54)
+	n, readErr := f.Read(header)
+	result += fmt.Sprintf(" header_bytes=%d", n)
+	if n >= 34 && string(header[:2]) == "BM" {
+		result += fmt.Sprintf(
+			" bmp_declared_size=%d pixel_offset=%d dib_size=%d width=%d height=%d bpp=%d compression=%d",
+			binary.LittleEndian.Uint32(header[2:6]),
+			binary.LittleEndian.Uint32(header[10:14]),
+			binary.LittleEndian.Uint32(header[14:18]),
+			int32(binary.LittleEndian.Uint32(header[18:22])),
+			int32(binary.LittleEndian.Uint32(header[22:26])),
+			binary.LittleEndian.Uint16(header[28:30]),
+			binary.LittleEndian.Uint32(header[30:34]),
+		)
+	} else if n > 0 {
+		prefixLen := n
+		if prefixLen > 16 {
+			prefixLen = 16
+		}
+		result += fmt.Sprintf(" header_prefix=%x", header[:prefixLen])
+	}
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		result += fmt.Sprintf(" read_error=%q", readErr)
+	}
+	return result
+}
+
+func preserveFailedFrame(path string, frameIndex int) (string, error) {
+	dir, err := applog.DiagnosticsDir()
+	if err != nil {
+		return "", err
+	}
+	src, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("opening failed frame: %w", err)
+	}
+	defer src.Close()
+
+	ext := filepath.Ext(path)
+	name := fmt.Sprintf("failed-frame-%d-%s-%d%s", frameIndex, time.Now().Format("20060102-150405.000"), os.Getpid(), ext)
+	dstPath := filepath.Join(dir, name)
+	dst, err := os.OpenFile(dstPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return "", fmt.Errorf("creating diagnostic copy: %w", err)
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		_ = dst.Close()
+		_ = os.Remove(dstPath)
+		return "", fmt.Errorf("copying failed frame: %w", err)
+	}
+	if err := dst.Close(); err != nil {
+		_ = os.Remove(dstPath)
+		return "", fmt.Errorf("closing diagnostic copy: %w", err)
+	}
+	return dstPath, nil
 }

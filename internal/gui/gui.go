@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +19,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 	"github.com/ncruces/zenity"
 
+	"framekit/internal/applog"
 	"framekit/internal/pipeline"
 )
 
@@ -42,10 +45,11 @@ type ui struct {
 	totalFrames     *widget.Entry
 	hibernate       *widget.Check
 
-	pattern          *widget.Entry
-	pollInterval     *widget.Entry
-	noFrameTimeout   *widget.Entry
-	minimizeOnStart  *widget.Check
+	pattern         *widget.Entry
+	pollInterval    *widget.Entry
+	noFrameTimeout  *widget.Entry
+	minimizeOnStart *widget.Check
+	debugEnabled    *widget.Check
 
 	startBtn *widget.Button
 	stopBtn  *widget.Button
@@ -62,26 +66,36 @@ type ui struct {
 	logCh  chan string
 	cancel context.CancelFunc
 	done   chan struct{}
+
+	debugLog     *os.File
+	debugLogPath string
 }
 
 // Run opens the framekit GUI. When autostart is true (used by the elevated
 // relaunch) the run begins as soon as the window is shown.
-func Run(configPath string, autostart bool) {
+func Run(configPath string, autostart bool, debugLogPath string) {
 	a := app.NewWithID("io.framekit.app")
 	w := a.NewWindow("framekit — MMD 帧序列转视频")
 
 	u := &ui{
-		configPath: configPath,
-		win:        w,
-		logCh:      make(chan string, 256),
+		configPath:   configPath,
+		win:          w,
+		logCh:        make(chan string, 256),
+		debugLogPath: debugLogPath,
 	}
-	u.encoders = pipeline.AvailableEncoders()
 
 	cfg, loadErr := pipeline.LoadConfig(configPath)
 	if loadErr != nil {
 		cfg = pipeline.DefaultConfig()
 	}
+	if err := u.configureDebugLogging(cfg.Debug.Enabled); err != nil {
+		log.Printf("warning: 无法启用调试日志: %v", err)
+	}
+	if cfg.Debug.Enabled && u.debugLog != nil {
+		log.Printf("debug: process started pid=%d elevated=%t", os.Getpid(), pipeline.IsElevated())
+	}
 
+	u.encoders = pipeline.AvailableEncoders()
 	u.build()
 	u.loadInto(cfg)
 	w.SetContent(u.content())
@@ -89,7 +103,6 @@ func Run(configPath string, autostart bool) {
 	w.CenterOnScreen()
 	w.SetCloseIntercept(u.onClose)
 
-	log.SetOutput(logWriter{ch: u.logCh})
 	go u.logPump()
 
 	if loadErr != nil {
@@ -103,6 +116,7 @@ func Run(configPath string, autostart bool) {
 	}
 
 	w.ShowAndRun()
+	u.closeDebugLog()
 }
 
 func (u *ui) build() {
@@ -138,6 +152,7 @@ func (u *ui) build() {
 	u.noFrameTimeout = widget.NewEntry()
 	u.minimizeOnStart = widget.NewCheck("", nil)
 	u.minimizeOnStart.SetChecked(true)
+	u.debugEnabled = widget.NewCheck("", nil)
 
 	u.startBtn = widget.NewButton("开始", u.onStart)
 	u.startBtn.Importance = widget.HighImportance
@@ -192,6 +207,7 @@ func (u *ui) content() fyne.CanvasObject {
 		widget.NewFormItem("无新帧超时 (s)", u.noFrameTimeout),
 		widget.NewFormItem("文件名正则 (高级)", u.pattern),
 		widget.NewFormItem("启动后自动最小化", u.minimizeOnStart),
+		widget.NewFormItem("启用调试日志", u.debugEnabled),
 	)
 
 	tabs := container.NewAppTabs(
@@ -243,6 +259,7 @@ func (u *ui) loadInto(cfg pipeline.Config) {
 	u.pattern.SetText(cfg.Monitor.Pattern)
 	u.pollInterval.SetText(strconv.Itoa(cfg.Monitor.PollIntervalMS))
 	u.noFrameTimeout.SetText(strconv.Itoa(cfg.Monitor.NoNewFrameTimeoutS))
+	u.debugEnabled.SetChecked(cfg.Debug.Enabled)
 }
 
 // collect builds a Config from the form fields and validates it.
@@ -287,6 +304,7 @@ func (u *ui) collect() (pipeline.Config, error) {
 	cfg.Monitor.Pattern = strings.TrimSpace(u.pattern.Text)
 	cfg.Monitor.PollIntervalMS = atoi(u.pollInterval.Text, "轮询间隔")
 	cfg.Monitor.NoNewFrameTimeoutS = atoi(u.noFrameTimeout.Text, "无新帧超时")
+	cfg.Debug.Enabled = u.debugEnabled.Checked
 
 	if err == nil {
 		switch {
@@ -317,6 +335,10 @@ func (u *ui) onSave() {
 		dialog.ShowError(err, u.win)
 		return
 	}
+	if err := u.configureDebugLogging(cfg.Debug.Enabled); err != nil {
+		dialog.ShowError(fmt.Errorf("配置已保存，但无法应用调试日志设置：%w", err), u.win)
+		return
+	}
 	u.loadedExtraOpts = cfg.Encoder.ExtraOpts
 	log.Printf("配置已保存到 %s", u.configPath)
 	dialog.ShowInformation("已保存", "配置已写入 "+u.configPath, u.win)
@@ -328,14 +350,21 @@ func (u *ui) onStart() {
 		dialog.ShowError(err, u.win)
 		return
 	}
+	if err := u.configureDebugLogging(cfg.Debug.Enabled); err != nil {
+		dialog.ShowError(fmt.Errorf("无法配置调试日志：%w", err), u.win)
+		return
+	}
 	status, ierr := pipeline.InspectMountPoint(cfg.Ramdisk.MountPoint)
 	if ierr != nil {
+		log.Printf("挂载点检查失败: %v", ierr)
 		dialog.ShowError(ierr, u.win)
 		return
 	}
 	switch status {
 	case pipeline.MountDriveInUse:
-		dialog.ShowError(fmt.Errorf("盘符 %s 已被占用，请改用其他挂载点", cfg.Ramdisk.MountPoint), u.win)
+		err := fmt.Errorf("盘符 %s 已被占用，请改用其他挂载点", cfg.Ramdisk.MountPoint)
+		log.Printf("启动检查失败: %v", err)
+		dialog.ShowError(err, u.win)
 		return
 	case pipeline.MountDirNonEmpty:
 		dialog.ShowConfirm("挂载点非空 — 数据丢失风险",
@@ -363,8 +392,16 @@ func (u *ui) autoStart() {
 		dialog.ShowError(err, u.win)
 		return
 	}
-	if status, _ := pipeline.InspectMountPoint(cfg.Ramdisk.MountPoint); status == pipeline.MountDriveInUse {
-		dialog.ShowError(fmt.Errorf("盘符 %s 已被占用，请改用其他挂载点", cfg.Ramdisk.MountPoint), u.win)
+	status, inspectErr := pipeline.InspectMountPoint(cfg.Ramdisk.MountPoint)
+	if inspectErr != nil {
+		log.Printf("提权后挂载点检查失败: %v", inspectErr)
+		dialog.ShowError(inspectErr, u.win)
+		return
+	}
+	if status == pipeline.MountDriveInUse {
+		err := fmt.Errorf("盘符 %s 已被占用，请改用其他挂载点", cfg.Ramdisk.MountPoint)
+		log.Printf("提权后启动检查失败: %v", err)
+		dialog.ShowError(err, u.win)
 		return
 	}
 	u.startRun(cfg)
@@ -378,13 +415,21 @@ func (u *ui) proceed(cfg pipeline.Config) {
 		return
 	}
 	if err := cfg.Save(u.configPath); err != nil {
+		log.Printf("提权前保存配置失败: %v", err)
 		dialog.ShowError(fmt.Errorf("保存配置失败：%w", err), u.win)
 		return
 	}
-	if err := relaunchElevated(u.configPath); err != nil {
+	if u.debugLogPath != "" {
+		log.Printf("正在启动提权进程，复用调试日志：%s", u.debugLogPath)
+	} else {
+		log.Println("正在启动提权进程")
+	}
+	if err := relaunchElevated(u.configPath, u.debugLogPath); err != nil {
 		if isUserCancelledUAC(err) {
+			log.Println("未获得管理员权限，操作已取消")
 			dialog.ShowInformation("已取消", "未获得管理员权限，操作已取消。", u.win)
 		} else {
+			log.Printf("提权启动失败: %v", err)
 			dialog.ShowError(fmt.Errorf("提权启动失败：%w", err), u.win)
 		}
 		return
@@ -394,6 +439,10 @@ func (u *ui) proceed(cfg pipeline.Config) {
 }
 
 func (u *ui) startRun(cfg pipeline.Config) {
+	if err := u.configureDebugLogging(cfg.Debug.Enabled); err != nil {
+		dialog.ShowError(fmt.Errorf("无法启用调试日志：%w", err), u.win)
+		return
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	u.cancel = cancel
 	u.done = make(chan struct{})
@@ -435,6 +484,9 @@ func (u *ui) startRun(cfg pipeline.Config) {
 			v := float64(done) / float64(total)
 			fyne.Do(func() { u.progress.SetValue(v) })
 		})
+		if err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("运行失败: %v", err)
+		}
 		fyne.Do(func() {
 			cancelMinimize() // abort pending minimize if pipeline failed quickly
 			u.cancel = nil
@@ -451,7 +503,11 @@ func (u *ui) startRun(cfg pipeline.Config) {
 			case errors.Is(err, context.Canceled):
 				log.Println("已停止，RAM 盘已清理")
 			default:
-				dialog.ShowError(err, u.win)
+				displayErr := err
+				if cfg.Debug.Enabled && u.debugLogPath != "" {
+					displayErr = fmt.Errorf("%w\n\n调试日志：%s", err, u.debugLogPath)
+				}
+				dialog.ShowError(displayErr, u.win)
 			}
 		})
 	}()
@@ -518,6 +574,51 @@ func (w logWriter) Write(p []byte) (int, error) {
 	default: // drop when the GUI is backed up; never block the logger
 	}
 	return len(p), nil
+}
+
+func (u *ui) configureDebugLogging(enabled bool) error {
+	guiWriter := logWriter{ch: u.logCh}
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	if !enabled {
+		log.SetOutput(guiWriter)
+		if u.debugLog != nil {
+			_ = u.debugLog.Close()
+			u.debugLog = nil
+			u.debugLogPath = ""
+		}
+		return nil
+	}
+	if u.debugLog != nil {
+		log.SetOutput(io.MultiWriter(guiWriter, u.debugLog))
+		return nil
+	}
+	var (
+		f    *os.File
+		path string
+		err  error
+	)
+	if u.debugLogPath == "" {
+		f, path, err = applog.Open()
+	} else {
+		f, path, err = applog.OpenPath(u.debugLogPath)
+	}
+	if err != nil {
+		log.SetOutput(guiWriter)
+		return err
+	}
+	u.debugLog = f
+	u.debugLogPath = path
+	log.SetOutput(io.MultiWriter(guiWriter, f))
+	log.Printf("调试日志：%s", path)
+	return nil
+}
+
+func (u *ui) closeDebugLog() {
+	log.SetOutput(os.Stderr)
+	if u.debugLog != nil {
+		_ = u.debugLog.Close()
+		u.debugLog = nil
+	}
 }
 
 func (u *ui) logPump() {

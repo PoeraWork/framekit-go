@@ -13,7 +13,7 @@ import (
 // the GUI and immediately begins the run (scheme A: UAC is only requested when
 // the user actually clicks "开始"). It returns an error if the user declines the
 // UAC prompt or the launch otherwise fails.
-func relaunchElevated(configPath string) error {
+func relaunchElevated(configPath, debugLogPath string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
@@ -24,6 +24,9 @@ func relaunchElevated(configPath string) error {
 	}
 
 	args := "gui -autostart -c " + quoteArg(configPath)
+	if debugLogPath != "" {
+		args += " -debug-log " + quoteArg(debugLogPath)
+	}
 
 	verbPtr, err := windows.UTF16PtrFromString("runas")
 	if err != nil {

@@ -19,7 +19,7 @@ func writeFile(t *testing.T, dir, name string) string {
 }
 
 func fastMonitor(dir string) *Monitor {
-	return NewMonitor(dir, MonitorConfig{PollIntervalMS: 1, NoNewFrameTimeoutS: 1})
+	return NewMonitor(dir, MonitorConfig{PollIntervalMS: 1, NoNewFrameTimeoutS: 1}, false)
 }
 
 func TestAwaitTemplateAutoDetect(t *testing.T) {
@@ -204,7 +204,7 @@ func TestPatternMode(t *testing.T) {
 		PollIntervalMS:     1,
 		NoNewFrameTimeoutS: 1,
 	}
-	m := NewMonitor(dir, cfg)
+	m := NewMonitor(dir, cfg, false)
 	if err := m.AwaitTemplate(context.Background()); err != nil {
 		t.Fatalf("AwaitTemplate: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestPatternErrors(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			cfg := MonitorConfig{Pattern: c.pattern, PollIntervalMS: 1, NoNewFrameTimeoutS: 1}
-			m := NewMonitor(dir, cfg)
+			m := NewMonitor(dir, cfg, false)
 			err := m.AwaitTemplate(context.Background())
 			if err == nil {
 				t.Fatal("want error, got nil")

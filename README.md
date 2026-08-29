@@ -98,7 +98,23 @@ hibernate = false               # 完成后是否休眠
                                 # 仅当递增数字不在文件名末尾时才需要设置，如：^(\d+)_9\.bmp$
 poll_interval_ms = 50           # 轮询间隔
 no_new_frame_timeout_s = 60     # 超过此时间没有新帧则视为结束
+
+[debug]
+enabled = false                 # 启用持久日志和失败帧保全
 ```
+
+## 调试偶发故障
+
+遇到偶发解码或编码问题时，可在 GUI 的「监控」页勾选「启用调试日志」，也可以在配置文件中设置：
+
+```toml
+[debug]
+enabled = true
+```
+
+开启后，完整日志会同时显示在 GUI 并写入 `logs/framekit-*.log`，UAC 提权前后的进程会接着写同一个文件。解码重试会记录文件大小、修改时间、BMP 文件头、每次错误以及 FFmpeg/libav 的底层诊断；如果最终仍然失败，问题帧会在 RAM 盘卸载前复制到 `logs/diagnostics/`。错误弹窗会显示本次日志的绝对路径。
+
+日志和失败帧可能占用较多空间，问题定位完成后可手动删除 `logs/` 目录。
 
 ## 构建
 

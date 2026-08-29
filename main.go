@@ -6,11 +6,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
 	"strings"
 
+	"framekit/internal/applog"
 	"framekit/internal/gui"
 	"framekit/internal/pipeline"
 )
@@ -24,7 +26,7 @@ func main() {
 	if len(args) == 0 {
 		// Double-clicked from Explorer — launch the GUI.
 		hideOwnConsole()
-		gui.Run(defaultConfigPath, false)
+		gui.Run(defaultConfigPath, false, "")
 		return
 	}
 
@@ -56,8 +58,9 @@ func cmdGUI(args []string) {
 	fs := flag.NewFlagSet("gui", flag.ExitOnError)
 	configPath := fs.String("c", defaultConfigPath, "配置文件路径")
 	autostart := fs.Bool("autostart", false, "启动后立即开始（提权重启时内部使用）")
+	debugLogPath := fs.String("debug-log", "", "复用调试日志（提权重启时内部使用）")
 	_ = fs.Parse(args)
-	gui.Run(*configPath, *autostart)
+	gui.Run(*configPath, *autostart, *debugLogPath)
 }
 
 func cmdInit(args []string) {
@@ -84,6 +87,17 @@ func cmdRun(args []string) {
 	cfg, err := pipeline.LoadConfig(*configPath)
 	if err != nil {
 		log.Fatalf("%v", err)
+	}
+	if cfg.Debug.Enabled {
+		f, path, logErr := applog.Open()
+		if logErr != nil {
+			log.Printf("warning: 无法启用调试日志: %v", logErr)
+		} else {
+			defer f.Close()
+			log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+			log.SetOutput(io.MultiWriter(os.Stderr, f))
+			log.Printf("调试日志：%s", path)
+		}
 	}
 
 	status, err := pipeline.InspectMountPoint(cfg.Ramdisk.MountPoint)

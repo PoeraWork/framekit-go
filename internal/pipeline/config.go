@@ -41,11 +41,16 @@ type MonitorConfig struct {
 	NoNewFrameTimeoutS int    `toml:"no_new_frame_timeout_s"`
 }
 
+type DebugConfig struct {
+	Enabled bool `toml:"enabled"`
+}
+
 type Config struct {
 	Ramdisk RamdiskConfig `toml:"ramdisk"`
 	Encoder EncoderConfig `toml:"encoder"`
 	Output  OutputConfig  `toml:"output"`
 	Monitor MonitorConfig `toml:"monitor"`
+	Debug   DebugConfig   `toml:"debug"`
 }
 
 func DefaultConfig() Config {
@@ -142,4 +147,7 @@ hibernate = false          # 完成后是否休眠
 # pattern = ""             # 高级：自定义文件名正则，第一个捕获组为帧号；留空即自动检测末尾数字
 poll_interval_ms = 50
 no_new_frame_timeout_s = 60
+
+[debug]
+enabled = false             # 启用持久日志和失败帧保全
 `

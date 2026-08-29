@@ -173,8 +173,10 @@ func (e *Encoder) Encode(src *astiav.Frame) error {
 // Close flushes the encoder, writes the MP4 trailer and releases resources.
 func (e *Encoder) Close() error {
 	if !e.started {
+		e.release()
 		return errors.New("encoder was never started")
 	}
+	defer e.release()
 	if err := e.codecContext.SendFrame(nil); err != nil {
 		return fmt.Errorf("flushing encoder: %w", err)
 	}
@@ -185,15 +187,44 @@ func (e *Encoder) Close() error {
 		return fmt.Errorf("writing trailer: %w", err)
 	}
 
-	e.packet.Free()
-	e.dstFrame.Free()
-	e.scaler.Free()
-	e.codecContext.Free()
+	return nil
+}
+
+// Abort releases encoder resources without finalizing an incomplete MP4 file.
+func (e *Encoder) Abort() {
+	if e.ioContext != nil {
+		log.Printf("warning: encoder aborted; incomplete output remains at %s", e.outputPath)
+	}
+	e.release()
+}
+
+func (e *Encoder) release() {
+	if e.packet != nil {
+		e.packet.Free()
+		e.packet = nil
+	}
+	if e.dstFrame != nil {
+		e.dstFrame.Free()
+		e.dstFrame = nil
+	}
+	if e.scaler != nil {
+		e.scaler.Free()
+		e.scaler = nil
+	}
+	if e.codecContext != nil {
+		e.codecContext.Free()
+		e.codecContext = nil
+	}
 	if e.ioContext != nil {
 		_ = e.ioContext.Close()
+		e.ioContext = nil
 	}
-	e.formatContext.Free()
-	return nil
+	if e.formatContext != nil {
+		e.formatContext.Free()
+		e.formatContext = nil
+	}
+	e.stream = nil
+	e.started = false
 }
 
 func (e *Encoder) initFromFrame(src *astiav.Frame) error {
@@ -255,7 +286,13 @@ func (e *Encoder) initFromFrame(src *astiav.Frame) error {
 	}
 	e.scaler = scaler
 	e.dstFrame = astiav.AllocFrame()
+	if e.dstFrame == nil {
+		return errors.New("could not allocate destination frame")
+	}
 	e.packet = astiav.AllocPacket()
+	if e.packet == nil {
+		return errors.New("could not allocate encoder packet")
+	}
 	e.started = true
 	return nil
 }

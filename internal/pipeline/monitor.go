@@ -24,9 +24,10 @@ var autoDetectRe = regexp.MustCompile(`^(.*?)(\d+)\.(\w+)$`)
 // the first matching file or driven by MonitorConfig.Pattern), then WaitFrame
 // to pull each subsequent frame by its logical index.
 type Monitor struct {
-	dir string
-	cfg MonitorConfig
-	tpl template
+	dir   string
+	cfg   MonitorConfig
+	tpl   template
+	debug bool
 }
 
 // template records what AwaitTemplate learned about the recording tool's
@@ -43,14 +44,14 @@ type template struct {
 	startIdx int
 }
 
-func NewMonitor(dir string, cfg MonitorConfig) *Monitor {
+func NewMonitor(dir string, cfg MonitorConfig, debug bool) *Monitor {
 	// Resolve symlinks/junctions so file operations use the real path.
 	// On Windows, folder mount points are reparse points; os.Stat through
 	// them can miss newly created files whereas the resolved path works reliably.
 	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = resolved
 	}
-	return &Monitor{dir: dir, cfg: cfg}
+	return &Monitor{dir: dir, cfg: cfg, debug: debug}
 }
 
 // AwaitTemplate blocks until a file matching the configured pattern — or, if
@@ -73,6 +74,13 @@ func (m *Monitor) AwaitTemplate(ctx context.Context) error {
 	for {
 		if tpl, ok := m.detectOnce(userRe); ok {
 			m.tpl = tpl
+			if m.debug {
+				if tpl.re != nil {
+					log.Printf("debug: monitor template dir=%q pattern=%q start_index=%d", m.dir, tpl.re.String(), tpl.startIdx)
+				} else {
+					log.Printf("debug: monitor template dir=%q prefix=%q digits=%d extension=%q start_index=%d", m.dir, tpl.prefix, tpl.digits, tpl.ext, tpl.startIdx)
+				}
+			}
 			return nil
 		}
 		select {
@@ -135,6 +143,9 @@ func (m *Monitor) detectOnce(userRe *regexp.Regexp) (template, bool) {
 func (m *Monitor) scanDir(dir string, userRe *regexp.Regexp) (template, bool) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
+		if m.debug {
+			log.Printf("debug: monitor ReadDir failed dir=%q error=%v", dir, err)
+		}
 		return template{}, false
 	}
 	var (
@@ -238,6 +249,9 @@ func (m *Monitor) WaitFrame(ctx context.Context, i int) (string, bool) {
 		}
 		waited += poll
 		if waited > timeout {
+			if m.debug {
+				log.Printf("debug: monitor timeout dir=%q logical_index=%d actual_index=%d waited=%s", m.dir, i, i+m.tpl.startIdx, waited)
+			}
 			return "", false
 		}
 	}
