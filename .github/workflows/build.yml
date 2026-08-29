@@ -76,14 +76,25 @@ jobs:
         run: go test ./...
 
       - name: build
+        id: build
         env:
           CGO_ENABLED: "1"
           CGO_CFLAGS: "-I/mingw64/include"
           CGO_LDFLAGS: "-L/mingw64/lib"
           PKG_CONFIG_PATH: "/mingw64/lib/pkgconfig"
         run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="$GITHUB_REF_NAME"
+          else
+            version="dev-${GITHUB_SHA:0:7}"
+          fi
+          echo "FRAMEKIT_VERSION=$version" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
           mkdir -p dist
-          go build -trimpath -ldflags='-s -w' -o dist/framekit.exe .
+          go build -trimpath \
+            -ldflags="-s -w -X framekit/internal/buildinfo.Version=$version" \
+            -o dist/framekit.exe .
 
           # FFmpeg 运行时 DLL：BtbN 构建自包含，仅 7 个 av*/sw*
           cp ffmpeg/bin/*.dll dist/
@@ -96,17 +107,26 @@ jobs:
             | sort -u \
             | while read -r dll; do cp -v "$dll" dist/; done
 
+          actual=$(./dist/framekit.exe --version | tr -d '\r')
+          expected="framekit $version"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "version check failed: got '$actual', want '$expected'" >&2
+            exit 1
+          fi
+          echo "verified: $actual"
+
       # 打包成 zip，版本号取自 tag（非 tag 推送用 dev）
       - name: package
         shell: pwsh
         run: |
-          $ver = if ($env:GITHUB_REF_NAME -match '^v') { $env:GITHUB_REF_NAME } else { 'dev' }
+          $ver = $env:FRAMEKIT_VERSION
+          if (-not $ver) { throw 'FRAMEKIT_VERSION is not set' }
           Compress-Archive -Path dist\* -DestinationPath "framekit-$ver-windows-amd64.zip"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: framekit-windows-amd64
-          path: dist/
+          name: framekit-${{ steps.build.outputs.version }}-windows-amd64
+          path: framekit-${{ steps.build.outputs.version }}-windows-amd64.zip
 
       # 只在推送 vX.Y.Z tag 时发布 Release
       - name: release

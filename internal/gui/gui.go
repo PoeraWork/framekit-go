@@ -20,6 +20,7 @@ import (
 	"github.com/ncruces/zenity"
 
 	"framekit/internal/applog"
+	"framekit/internal/buildinfo"
 	"framekit/internal/pipeline"
 )
 
@@ -75,7 +76,7 @@ type ui struct {
 // relaunch) the run begins as soon as the window is shown.
 func Run(configPath string, autostart bool, debugLogPath string) {
 	a := app.NewWithID("io.framekit.app")
-	w := a.NewWindow("framekit — MMD 帧序列转视频")
+	w := a.NewWindow(buildinfo.String() + " — MMD 帧序列转视频")
 
 	u := &ui{
 		configPath:   configPath,
@@ -92,7 +93,7 @@ func Run(configPath string, autostart bool, debugLogPath string) {
 		log.Printf("warning: 无法启用调试日志: %v", err)
 	}
 	if cfg.Debug.Enabled && u.debugLog != nil {
-		log.Printf("debug: process started pid=%d elevated=%t", os.Getpid(), pipeline.IsElevated())
+		log.Printf("debug: process started version=%s pid=%d elevated=%t", buildinfo.Version, os.Getpid(), pipeline.IsElevated())
 	}
 
 	u.encoders = pipeline.AvailableEncoders()

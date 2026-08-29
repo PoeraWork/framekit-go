@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"framekit/internal/applog"
+	"framekit/internal/buildinfo"
 	"framekit/internal/gui"
 	"framekit/internal/pipeline"
 )
@@ -23,6 +24,10 @@ func main() {
 	log.SetFlags(log.LstdFlags)
 
 	args := os.Args[1:]
+	if len(args) == 1 && args[0] == "--version" {
+		fmt.Println(buildinfo.String())
+		return
+	}
 	if len(args) == 0 {
 		// Double-clicked from Explorer — launch the GUI.
 		hideOwnConsole()
@@ -48,6 +53,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "framekit — MMD 帧序列转视频流水线")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "用法:")
+	fmt.Fprintln(os.Stderr, "  framekit --version                    显示版本")
 	fmt.Fprintln(os.Stderr, "  framekit                              启动图形界面")
 	fmt.Fprintln(os.Stderr, "  framekit gui  [-c config.toml]        启动图形界面")
 	fmt.Fprintln(os.Stderr, "  framekit init [-c config.toml] [-f]   生成默认配置文件")
@@ -97,6 +103,7 @@ func cmdRun(args []string) {
 			log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 			log.SetOutput(io.MultiWriter(os.Stderr, f))
 			log.Printf("调试日志：%s", path)
+			log.Printf("debug: process started version=%s pid=%d elevated=%t", buildinfo.Version, os.Getpid(), pipeline.IsElevated())
 		}
 	}
 

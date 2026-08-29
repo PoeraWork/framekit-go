@@ -27,12 +27,24 @@ try {
     if (Test-Path $dist) { Remove-Item $dist -Recurse -Force }
     New-Item -ItemType Directory -Path $dist | Out-Null
 
-    Write-Host 'building framekit.exe ...'
-    go build -trimpath -ldflags '-s -w' -o (Join-Path $dist 'framekit.exe') .
+    $version = (& git describe --tags --always --dirty 2>$null)
+    if ($LASTEXITCODE -ne 0 -or -not $version) { $version = 'dev' }
+    $version = $version.Trim()
+    $ldflags = "-s -w -X framekit/internal/buildinfo.Version=$version"
+
+    Write-Host "building framekit.exe ($version) ..."
+    go build -trimpath -ldflags $ldflags -o (Join-Path $dist 'framekit.exe') .
     if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
 
     Write-Host 'copying FFmpeg runtime DLLs ...'
     Copy-Item "$ffmpeg\bin\*.dll" -Destination $dist -Force
+
+    $actualVersion = (& (Join-Path $dist 'framekit.exe') --version).Trim()
+    $expectedVersion = "framekit $version"
+    if ($actualVersion -ne $expectedVersion) {
+        throw "version check failed: got '$actualVersion', want '$expectedVersion'"
+    }
+    Write-Host "verified: $actualVersion"
 
     $count = (Get-ChildItem $dist -File).Count
     Write-Host "done: dist\ 发布包就绪（$count 个文件），可直接压缩分发"

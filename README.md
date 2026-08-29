@@ -28,6 +28,9 @@ framekit gui [-c config.toml]
 ### 命令行
 
 ```
+# 查看程序版本
+framekit --version
+
 # 生成默认配置文件
 framekit init [-c config.toml] [-f]
 
@@ -36,6 +39,8 @@ framekit run  [-c config.toml] [-y]
 ```
 
 `-y` 跳过挂载点非空的二次确认提示。
+
+GUI 标题和 `--version` 使用同一个构建版本。正式发布包显示对应的 Git tag，本地开发构建显示 `git describe` 结果，便于从 exe 回溯源码版本。
 
 ## 工作原理
 
