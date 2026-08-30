@@ -1,11 +1,14 @@
 package pipeline
 
 import (
+	"context"
 	"encoding/binary"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDescribeImageFileBMP(t *testing.T) {
@@ -35,6 +38,16 @@ func TestDescribeImageFileBMP(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("describeImageFile() = %q, want %q", got, want)
 		}
+	}
+}
+
+func TestDecodeImageWithRetryHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := decodeImageWithRetry(ctx, filepath.Join(t.TempDir(), "missing.bmp"), 10, time.Second, false)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("decodeImageWithRetry() error = %v; want context.Canceled", err)
 	}
 }
 

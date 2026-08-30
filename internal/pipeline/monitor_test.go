@@ -193,6 +193,21 @@ func TestWaitFrameDigitsOverflow(t *testing.T) {
 	}
 }
 
+func TestWaitFrameCancellationWinsOverReadyFile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "frame_0001.png")
+	m := fastMonitor(dir)
+	if err := m.AwaitTemplate(context.Background()); err != nil {
+		t.Fatalf("AwaitTemplate: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if path, ok := m.WaitFrame(ctx, 0); ok || path != "" {
+		t.Fatalf("WaitFrame() = (%q, %v); want cancellation", path, ok)
+	}
+}
+
 func TestPatternMode(t *testing.T) {
 	dir := t.TempDir()
 	// Recording tool writes x_9.bmp style — incrementing digits are at the

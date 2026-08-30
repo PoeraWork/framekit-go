@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -516,7 +517,7 @@ func (u *ui) startRun(cfg pipeline.Config) {
 
 func (u *ui) onStop() {
 	if u.cancel != nil {
-		log.Println("正在停止...")
+		log.Println("正在停止并收尾视频...")
 		u.stopBtn.Disable()
 		u.cancel()
 	}
@@ -570,6 +571,10 @@ func (u *ui) codecForDevice(label string) string {
 type logWriter struct{ ch chan string }
 
 func (w logWriter) Write(p []byte) (int, error) {
+	// Keep verbose FFmpeg diagnostics in the debug file without flooding the UI.
+	if bytes.Contains(p, []byte(" ffmpeg: level=")) {
+		return len(p), nil
+	}
 	select {
 	case w.ch <- string(p):
 	default: // drop when the GUI is backed up; never block the logger
@@ -623,9 +628,29 @@ func (u *ui) closeDebugLog() {
 }
 
 func (u *ui) logPump() {
-	for line := range u.logCh {
-		l := line
-		fyne.Do(func() { u.appendLog(l) })
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	var pending strings.Builder
+	flush := func() {
+		if pending.Len() == 0 {
+			return
+		}
+		text := pending.String()
+		pending.Reset()
+		fyne.Do(func() { u.appendLog(text) })
+	}
+	for {
+		select {
+		case line, ok := <-u.logCh:
+			if !ok {
+				flush()
+				return
+			}
+			pending.WriteString(line)
+		case <-ticker.C:
+			flush()
+		}
 	}
 }
 

@@ -239,6 +239,9 @@ func (m *Monitor) WaitFrame(ctx context.Context, i int) (string, bool) {
 	timeout := time.Duration(m.cfg.NoNewFrameTimeoutS) * time.Second
 	var waited time.Duration
 	for {
+		if ctx.Err() != nil {
+			return "", false
+		}
 		if p := m.findFrame(i); p != "" {
 			return p, true
 		}

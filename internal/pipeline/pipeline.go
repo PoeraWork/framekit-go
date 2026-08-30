@@ -89,7 +89,7 @@ func nextOutputPath(dir, pattern string) string {
 // Run executes the frame-to-video pipeline. It blocks until the pipeline
 // finishes, ctx is cancelled, or an error occurs. If onProgress is non-nil it
 // is called as frames are encoded and must not block.
-func Run(ctx context.Context, cfg Config, onProgress func(done, total int)) error {
+func Run(ctx context.Context, cfg Config, onProgress func(done, total int)) (runResult error) {
 	if cfg.Output.TotalFrames <= 0 {
 		return errors.New("total_frames must be > 0")
 	}
@@ -98,9 +98,10 @@ func Run(ctx context.Context, cfg Config, onProgress func(done, total int)) erro
 	if cfg.Debug.Enabled {
 		enableFFmpegDebugLogging()
 		defer disableFFmpegDebugLogging()
-		log.Printf("debug: run config mount=%q size_mb=%d output_dir=%q output_pattern=%q total_frames=%d codec=%q fps=%d skip_frames=%d monitor_pattern=%q poll_ms=%d timeout_s=%d",
+		log.Printf("debug: run config mount=%q size_mb=%d output_dir=%q output_pattern=%q total_frames=%d codec=%q fps=%d skip_frames=%d monitor_pattern=%q poll_ms=%d timeout_s=%d hibernate=%t",
 			cfg.Ramdisk.MountPoint, cfg.Ramdisk.SizeMB, cfg.Output.Dir, cfg.Output.FilenamePattern, total,
-			cfg.Encoder.Codec, cfg.Encoder.FPS, skip, cfg.Monitor.Pattern, cfg.Monitor.PollIntervalMS, cfg.Monitor.NoNewFrameTimeoutS)
+			cfg.Encoder.Codec, cfg.Encoder.FPS, skip, cfg.Monitor.Pattern, cfg.Monitor.PollIntervalMS, cfg.Monitor.NoNewFrameTimeoutS,
+			cfg.Output.Hibernate)
 	}
 
 	log.Println("pre-flight checks...")
@@ -123,14 +124,31 @@ func Run(ctx context.Context, cfg Config, onProgress func(done, total int)) erro
 		return err
 	}
 	var removeOnce sync.Once
-	removeRamdisk := func() {
+	var removeErr error
+	removeRamdisk := func() error {
 		removeOnce.Do(func() {
-			if err := ramdisk.Remove(); err != nil {
-				log.Printf("warning: %v", err)
+			log.Printf("removing RAM disk at %s ...", mount)
+			cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancelCleanup()
+			removeErr = ramdisk.Remove(cleanupCtx)
+			if removeErr != nil {
+				log.Printf("warning: RAM disk removal failed: %v", removeErr)
+			} else {
+				log.Printf("RAM disk removed from %s", mount)
 			}
 		})
+		return removeErr
 	}
-	defer removeRamdisk()
+	defer func() {
+		if err := removeRamdisk(); err != nil {
+			cleanupErr := fmt.Errorf("removing RAM disk: %w", err)
+			if runResult == nil || errors.Is(runResult, context.Canceled) {
+				runResult = cleanupErr
+			} else {
+				runResult = errors.Join(runResult, cleanupErr)
+			}
+		}
+	}()
 
 	log.Printf("ramdisk mounted at %s", mount)
 
@@ -146,7 +164,7 @@ func Run(ctx context.Context, cfg Config, onProgress func(done, total int)) erro
 	if entries, err := os.ReadDir(watchDir); err == nil {
 		for _, e := range entries {
 			if !e.IsDir() {
-				removeRamdisk()
+				_ = removeRamdisk()
 				return fmt.Errorf("安全检查失败：挂载后目录 %s 内仍可见已有文件，操作已中止以防数据丢失。\n请确保挂载点是空目录，切勿使用含有重要文件的文件夹。", mount)
 			}
 		}
@@ -162,6 +180,9 @@ func Run(ctx context.Context, cfg Config, onProgress func(done, total int)) erro
 	if skip > 0 {
 		log.Printf("skipping first %d frames...", skip)
 		for i := 0; i < skip; i++ {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			path, ok := monitor.WaitFrame(ctx, i)
 			if !ok {
 				if ctx.Err() != nil {
@@ -185,17 +206,26 @@ func Run(ctx context.Context, cfg Config, onProgress func(done, total int)) erro
 	produced := 0
 	var runErr error
 	for i := skip; i < total; i++ {
+		if err := ctx.Err(); err != nil {
+			runErr = err
+			break
+		}
 		path, ok := monitor.WaitFrame(ctx, i)
 		if !ok {
 			if ctx.Err() != nil {
 				runErr = ctx.Err()
 			} else {
-				log.Printf("timeout waiting for frame %d, stopping", i)
+				runErr = fmt.Errorf("timeout waiting for frame %d", i)
+				log.Printf("%v", runErr)
 			}
 			break
 		}
-		frame, err := decodeImageWithRetry(path, 10, 100*time.Millisecond, cfg.Debug.Enabled)
+		frame, err := decodeImageWithRetry(ctx, path, 10, 100*time.Millisecond, cfg.Debug.Enabled)
 		if err != nil {
+			if ctx.Err() != nil {
+				runErr = ctx.Err()
+				break
+			}
 			if cfg.Debug.Enabled {
 				copyPath, copyErr := preserveFailedFrame(path, i)
 				if copyErr != nil {
@@ -229,17 +259,30 @@ func Run(ctx context.Context, cfg Config, onProgress func(done, total int)) erro
 		}
 		return errors.New("no frames were produced")
 	}
+	if errors.Is(runErr, context.Canceled) {
+		log.Println("stop requested; finalizing the partial video ...")
+	}
 	if err := encoder.Close(); err != nil {
 		return fmt.Errorf("finalizing video %s (file may be incomplete): %w", outputPath, err)
 	}
-	log.Printf("done — %d frames -> %s", produced, outputPath)
-
-	if runErr != nil {
-		return runErr
+	if err := removeRamdisk(); err != nil {
+		cleanupErr := fmt.Errorf("removing RAM disk: %w", err)
+		if runErr != nil && !errors.Is(runErr, context.Canceled) {
+			return errors.Join(runErr, cleanupErr)
+		}
+		return cleanupErr
 	}
 
+	if runErr != nil {
+		if errors.Is(runErr, context.Canceled) {
+			log.Printf("stopped — preserved %d frames -> %s", produced, outputPath)
+		}
+		return runErr
+	}
+	log.Printf("done — %d frames -> %s", produced, outputPath)
+
 	if cfg.Output.Hibernate {
-		if err := exec.Command("shutdown", "/h").Run(); err != nil {
+		if err := exec.CommandContext(ctx, "shutdown", "/h").Run(); err != nil {
 			log.Printf("warning: hibernate failed: %v", err)
 		}
 	}

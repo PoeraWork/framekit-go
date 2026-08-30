@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -108,12 +109,19 @@ func decodeImage(path string) (*astiav.Frame, error) {
 
 // decodeImageWithRetry retries decoding because the recording tool may still
 // hold a lock on a freshly written frame file.
-func decodeImageWithRetry(path string, retries int, delay time.Duration, debug bool) (*astiav.Frame, error) {
+func decodeImageWithRetry(ctx context.Context, path string, retries int, delay time.Duration, debug bool) (*astiav.Frame, error) {
 	var lastErr error
 	started := time.Now()
 	for attempt := 0; attempt < retries; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		frame, err := decodeImage(path)
 		if err == nil {
+			if err := ctx.Err(); err != nil {
+				frame.Free()
+				return nil, err
+			}
 			if debug && attempt > 0 {
 				log.Printf("debug: decode succeeded attempt=%d/%d elapsed=%s path=%q", attempt+1, retries, time.Since(started).Round(time.Millisecond), path)
 			}
@@ -124,7 +132,13 @@ func decodeImageWithRetry(path string, retries int, delay time.Duration, debug b
 			log.Printf("debug: decode failed attempt=%d/%d elapsed=%s path=%q %s error=%v", attempt+1, retries, time.Since(started).Round(time.Millisecond), path, describeImageFile(path), err)
 		}
 		if attempt < retries-1 {
-			time.Sleep(delay)
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
 		}
 	}
 	return nil, fmt.Errorf("after %d attempts: %w", retries, lastErr)
