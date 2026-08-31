@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/asticode/go-astiav"
@@ -26,7 +27,11 @@ func decodeImage(path string) (*astiav.Frame, error) {
 	}
 	defer formatContext.Free()
 
-	if err := formatContext.OpenInput(path, nil, nil); err != nil {
+	inputFormat, err := imageInputFormat(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := formatContext.OpenInput(path, inputFormat, nil); err != nil {
 		return nil, fmt.Errorf("opening image: %w", err)
 	}
 	defer formatContext.CloseInput()
@@ -105,6 +110,26 @@ func decodeImage(path string) (*astiav.Frame, error) {
 	}
 	frame.Free()
 	return nil, errors.New("no frame decoded from image")
+}
+
+func imageInputFormat(path string) (*astiav.InputFormat, error) {
+	var name string
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".bmp":
+		name = "bmp_pipe"
+	case ".png":
+		name = "png_pipe"
+	case ".jpg", ".jpeg":
+		name = "jpeg_pipe"
+	default:
+		return nil, nil
+	}
+
+	inputFormat := astiav.FindInputFormat(name)
+	if inputFormat == nil {
+		return nil, fmt.Errorf("FFmpeg input format %q is unavailable", name)
+	}
+	return inputFormat, nil
 }
 
 // decodeImageWithRetry retries decoding because the recording tool may still

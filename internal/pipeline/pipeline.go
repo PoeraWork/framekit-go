@@ -226,15 +226,21 @@ func Run(ctx context.Context, cfg Config, onProgress func(done, total int)) (run
 				runErr = ctx.Err()
 				break
 			}
+			preservedPath := ""
 			if cfg.Debug.Enabled {
 				copyPath, copyErr := preserveFailedFrame(path, i)
 				if copyErr != nil {
 					log.Printf("warning: failed to preserve frame %d: %v", i, copyErr)
 				} else {
+					preservedPath = copyPath
 					log.Printf("debug: failed frame preserved at %s", copyPath)
 				}
 			}
-			return fmt.Errorf("decoding frame %d (%s): %w", i, path, err)
+			decodeErr := fmt.Errorf("decoding frame %d (%s): %w", i, path, err)
+			if preservedPath != "" {
+				return fmt.Errorf("%w\n故障帧副本：%s", decodeErr, preservedPath)
+			}
+			return decodeErr
 		}
 		err = encoder.Encode(frame)
 		frame.Free()
